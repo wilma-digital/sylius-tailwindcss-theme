@@ -186,6 +186,10 @@ test.ecs:
 test.ecs.fix:
 	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php vendor/bin/ecs --fix check ${PLUGIN_DIR}/src)
 
+# Fix coding standard
+test.phpunit:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php vendor/bin/phpunit --colors=always)
+
 HELP += $(call help,test.schema,			Validate MySQL Schema)
 test.schema: ## Validate MySQL Schema
 	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php bin/console doctrine:cache:clear-metadata)

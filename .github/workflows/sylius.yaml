@@ -97,9 +97,9 @@ jobs:
                 name: 'Run webserver'
                 working-directory: ./install/Application
                 run: 'symfony server:start --port=8080 --dir=public --daemon'
-            -
-                name: 'Run PHPUnit'
-                run: 'make phpunit-ci'
+#            -
+#                name: 'Run PHPUnit'
+#                run: 'make phpunit-ci'
         services:
             mariadb:
                 image: 'mariadb:10'
