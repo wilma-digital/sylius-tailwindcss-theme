@@ -154,6 +154,7 @@ install-theme:
 	echo "        generate: true" >> ${APP_DIR}/config/packages/liip_imagine.yaml
 	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs "npm install tailwindcss @fortawesome/fontawesome-free daisyui")
 	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs "npm install postcss-loader@^7.0.0 autoprefixer --save-dev")
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs "npm install eslint --save-dev")
 
 HELP += $(call help,build-theme,			Build theme)
 build-theme:
@@ -172,6 +173,10 @@ test.all: test.composer test.schema test.twig ## Run all tests in once
 
 test.composer: ## Validate composer.json
 	${COMPOSER} validate --strict
+
+# Check eslint
+test.eslint:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm -i nodejs "cd themes/TailwindTheme && npm run lint")
 
 # Check coding standard
 test.ecs:
