@@ -3,8 +3,9 @@ SHELL=/bin/bash
 APP_DIR=tests/Application
 SYMFONY=cd ${APP_DIR} && symfony
 COMPOSER=symfony composer
-CONSOLE=${SYMFONY} console
+CONSOLE=cd ${APP_DIR} && docker-compose run --rm php bin/console
 COMPOSE=docker-compose
+DOCKER=cd ${APP_DIR} && docker-compose run --rm php bin/console sylius:install -s default -n
 YARN=yarn
 NPM=npm
 
@@ -12,24 +13,32 @@ NPM=npm
 ### DEVELOPMENT
 ### ¯¯¯¯¯¯¯¯¯¯¯
 
-HELP += $(call help,install,			Install the project and the theme)
+HELP += $(call help,install,			Install the project)
 install: application platform sylius theme ## Install the plugin
 .PHONY: install
 
-up: docker.up server.start ## Up the project (start docker, start symfony server)
-stop: server.stop docker.stop ## Stop the project (stop docker, stop symfony server)
-down: server.stop docker.down ## Down the project (removes docker containers, stop symfony server)
-
-HELP += $(call help,reset,			Stop docker and remove dependencies)
+HELP += $(call help,reset,			Stop docker and remove project)
 reset: ## Stop docker and remove dependencies
-	${MAKE} docker.down || true
+	${MAKE} platform_down || true
 	rm -rf ${APP_DIR}/node_modules ${APP_DIR}/package-lock.json
+	rm -rf ${APP_DIR}/vendor ${APP_DIR}/composer-lock.json
 	rm -rf ${APP_DIR}
 	rm -rf vendor composer.lock
-.PHONY: reset
+.PHONY: rese
 
-dependencies: composer.lock node_modules ## Setup the dependencies
-.PHONY: dependencies
+HELP += $(call help,stop,			Stop project)
+stop:
+	make platform_down
+
+HELP += $(call help,stop,			Start project)
+up:
+	make platform_up
+
+###
+### TEST APPLICATION
+### ¯¯¯¯¯
+
+application: php.ini .php-version ${APP_DIR} ## Setup the entire Test Application
 
 .php-version: .php-version.dist
 	rm -f .php-version
@@ -39,67 +48,11 @@ php.ini: php.ini.dist
 	rm -f php.ini
 	ln -s php.ini.dist php.ini
 
-composer.lock: composer.json
-	${COMPOSER} install --no-scripts --no-plugins
-
-yarn.install: ${APP_DIR}/yarn.lock
-npm.install: ${APP_DIR}/package-lock.json
-
-${APP_DIR}/yarn.lock:
-	ln -sf ${APP_DIR}/node_modules node_modules
-	cd ${APP_DIR} && ${YARN} install && ${YARN} build
-	${YARN} install
-	${YARN} encore prod
-
-${APP_DIR}/package-lock.json:
-	ln -sf ${APP_DIR}/node_modules node_modules
-	cd ${APP_DIR} && ${NPM} install
-	cd ${APP_DIR} && ${NPM} install tailwindcss @fortawesome/fontawesome-free daisyui
-	cd ${APP_DIR} && ${NPM} install postcss-loader@^7.0.0 autoprefixer --save-dev
-	cd ${APP_DIR} && ${NPM} run build:prod
-
-node_modules: ${APP_DIR}/node_modules ## Install the Node dependencies using npm
-
-${APP_DIR}/node_modules: npm.install
-
-###
-### TEST APPLICATION
-### ¯¯¯¯¯
-
-application: .php-version php.ini ${APP_DIR} setup_application ${APP_DIR}/docker-compose.yaml ## Setup the entire Test Application
-
 ${APP_DIR}:
-	(${COMPOSER} create-project --no-interaction --prefer-dist --no-scripts --no-progress --no-install sylius/sylius-standard="~${SYLIUS_VERSION}" ${APP_DIR})
-
-setup_application:
-	rm -f ${APP_DIR}/yarn.lock
-	rm -f ${APP_DIR}/package-lock.json
-	(cd ${APP_DIR} && ${COMPOSER} config repositories.plugin '{"type": "path", "url": "../../"}')
-	(cd ${APP_DIR} && ${COMPOSER} config repositories.adeliom '{"type":"vcs","url":"git@github.com:agence-adeliom/sylius-tailwindcss-theme.git"}')
-	(cd ${APP_DIR} && ${COMPOSER} config extra.symfony.allow-contrib true)
-	(cd ${APP_DIR} && ${COMPOSER} config minimum-stability dev)
-	(cd ${APP_DIR} && ${COMPOSER} config --no-plugins allow-plugins true)
-	(cd ${APP_DIR} && ${COMPOSER} config extra.symfony.require "~${SYMFONY_VERSION}")
-	(cd ${APP_DIR} && ${COMPOSER} require --no-install --no-scripts --no-progress sylius/sylius="~${SYLIUS_VERSION}") # Make sure to install the required version of sylius because the sylius-standard has a soft constraint
-	$(MAKE) ${APP_DIR}/.php-version
-	$(MAKE) ${APP_DIR}/php.ini
-	(cd ${APP_DIR} && ${COMPOSER} install --no-interaction)
-	$(MAKE) apply_dist
-	(cd ${APP_DIR} && ${COMPOSER} require --no-progress ${PLUGIN_NAME}="*@dev")
-	rm -rf ${APP_DIR}/var/cache
-
-
-${APP_DIR}/docker-compose.yaml:
-	rm -f ${APP_DIR}/docker-compose.yml
-	rm -f ${APP_DIR}/docker-compose.yaml
-	ln -s ../../docker-compose.yaml.dist ${APP_DIR}/docker-compose.yaml
-.PHONY: ${APP_DIR}/docker-compose.yaml
-
-${APP_DIR}/.php-version: .php-version
-	(cd ${APP_DIR} && ln -sf ../../.php-version)
-
-${APP_DIR}/php.ini: php.ini
-	(cd ${APP_DIR} && ln -sf ../../php.ini)
+	(${COMPOSER} create-project --no-interaction --prefer-dist --no-scripts --no-progress --no-install sylius/sylius-standard="${SYLIUS_VERSION}" ${APP_DIR})
+	cd ${APP_DIR} && chmod -R 777 public
+	echo "COMPOSE_PROJECT_NAME=sylius_tailwindcss_theme" >> ${APP_DIR}/.env
+	make apply_dist
 
 apply_dist:
 	ROOT_DIR=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST)))); \
@@ -112,107 +65,75 @@ apply_dist:
     done
 
 ###
-### TESTS
-### ¯¯¯¯¯
-
-test.all: test.composer test.phpstan test.phpmd test.phpunit test.phpspec test.phpcs test.yaml test.schema test.twig test.container ## Run all tests in once
-
-test.composer: ## Validate composer.json
-	${COMPOSER} validate --strict
-
-test.phpstan: ## Run PHPStan
-	${COMPOSER} phpstan
-
-test.phpmd: ## Run PHPMD
-	${COMPOSER} phpmd || true
-
-test.phpunit: ## Run PHPUnit
-	${COMPOSER} phpunit
-
-test.phpspec: ## Run PHPSpec
-	${COMPOSER} phpspec
-
-test.phpcs: ## Run PHP CS Fixer in dry-run
-	${COMPOSER} run -- phpcs --dry-run -v
-
-test.phpcs.fix: ## Run PHP CS Fixer and fix issues if possible
-	${COMPOSER} run -- phpcs -v
-
-test.container: ## Lint the symfony container
-	${CONSOLE} lint:container
-
-test.yaml: ## Lint the symfony Yaml files
-	${CONSOLE} lint:yaml ../../recipes ../../src/Resources/config
-
-test.schema: ## Validate MySQL Schema
-	${CONSOLE} doctrine:schema:validate
-
-HELP += $(call help,test.twig,			Test twig files)
-test.twig: ## Validate Twig templates
-	#${CONSOLE} lint:twig --no-debug templates/ ../../src/Resources/views/
-	composer install
-	vendor/bin/twigcs templates/ --severity error --display blocking --reporter githubAction
-
-###
 ### SYLIUS
-### ¯¯¯¯¯¯
+### ¯¯¯¯¯¯¯¯
+sylius: sylius_install install_bundle messenger
 
-sylius: dependencies sylius.database sylius.fixtures sylius.assets messenger.setup ## Install Sylius
-.PHONY: sylius
+DOCKER_USER ?= "$(shell id -u):$(shell id -g)"
+ENV ?= "dev"
 
-sylius.database: ## Setup the database
-	${CONSOLE} doctrine:database:drop --if-exists --force
-	${CONSOLE} doctrine:database:create --if-not-exists
-	${CONSOLE} doctrine:migration:migrate -n
+sylius_install:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec -it -u root php rm -rf public/media/image)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run php bin/console doctrine:database:drop --if-exists --force)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run php bin/console sylius:install -s default -n)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run php bin/console doctrine:query:sql "UPDATE sylius_channel SET theme_name = 'agence-adeliom/sylius-tailwindcss-theme'")
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run php bin/console sylius:theme:assets:install --symlink)
 
-sylius.fixtures: ## Run the fixtures
-	${CONSOLE} sylius:fixtures:load -n default
-	${CONSOLE} doctrine:query:sql "UPDATE sylius_channel SET theme_name = 'agence-adeliom/sylius-tailwindcss-theme'"
-
-sylius.assets: ## Install all assets with symlinks
-	${CONSOLE} assets:install --symlink
-	${CONSOLE} sylius:install:assets
-	${CONSOLE} sylius:theme:assets:install --symlink
+install_bundle:
+	cd ${APP_DIR} && docker-compose run php composer require --no-interaction ${PLUGIN_NAME}="*@dev"
+	rm -rf ${APP_DIR}/var/cache
 
 messenger.setup: ## Setup Messenger transports
-	${CONSOLE} messenger:setup-transports
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run php bin/console messenger:setup-transports)
 
 ###
 ### PLATFORM
 ### ¯¯¯¯¯¯¯¯
 
-platform: .php-version up ## Setup the platform tools
-.PHONY: platform
+platform:
+	@if [ ! -e compose.override.yml ]; then \
+		(cd ${APP_DIR} && cp compose.override.dist.yml compose.override.yml); \
+		(cd ${APP_DIR} && sed -i'' -e 's|          - public-media:/srv/sylius/public/media:rw|          - public-media:/srv/sylius/public/media:rw\n          - ../../:/srv/sylius/themes/TailwindTheme:rw|g' compose.override.yml); \
+		(cd ${APP_DIR} && sed -i'' -e 's|            - public-media:/srv/sylius/public/media:ro,nocopy|            - public-media:/srv/sylius/public/media:ro,nocopy\n            - ../../:/srv/sylius/themes/TailwindTheme:rw|g' compose.override.yml); \
+		(cd ${APP_DIR} && sed -i'' -e 's|            - ./public:/srv/sylius/public:rw,delegated|            - ./public:/srv/sylius/public:rw,delegated\n            - ../../:/srv/sylius/themes/TailwindTheme:rw|g' compose.override.yml); \
+		(cd ${APP_DIR} && rm -rf compose.override.yml-e); \
+		(cd ${APP_DIR} && ENV=$(ENV) docker-compose --project-name sylius-tailwindcss-theme); \
+	fi
 
-docker.pull: ## Pull the docker images
-	cd ${APP_DIR} && ${COMPOSE} pull
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose up -d --force-recreate )
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config github-oauth.github.com ${GITHUB_TOKEN})
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config minimum-stability dev)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config extra.symfony.allow-contrib true)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config repositories.plugin '{"type": "path", "url": "../../"}')
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config repositories.adeliom '{"type":"vcs","url":"git@github.com:agence-adeliom/sylius-tailwindcss-theme.git"}')
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer config extra.symfony.require "~${SYMFONY_VERSION}")
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer require --no-install --no-scripts --no-progress sylius/sylius="~${SYLIUS_VERSION}")
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer require --no-install --no-scripts --no-progress --dev friendsoftwig/twigcs)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer dump-autoload)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm php composer install --no-interaction --no-scripts --prefer-dist)
+	make platform_up
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs)
 
-docker.up: ## Start the docker containers
-	cd ${APP_DIR} && ${COMPOSE} up -d
-.PHONY: docker.up
+platform_debug:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose -f compose.yml -f compose.override.yml -f compose.debug.yml up -d)
 
-docker.stop: ## Stop the docker containers
-	cd ${APP_DIR} && ${COMPOSE} stop
-.PHONY: docker.stop
+platform_up:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose up -d )
 
-docker.down: ## Stop and remove the docker containers
-	cd ${APP_DIR} && ${COMPOSE} down
-.PHONY: docker.down
+platform_down:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose down)
 
-docker.logs: ## Logs the docker containers
-	cd ${APP_DIR} && ${COMPOSE} logs -f
-.PHONY: docker.logs
+platform_clean:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose down -v)
 
-docker.dc: ARGS=ps
-docker.dc: ## Run docker-compose command. Use ARGS="" to pass parameters to docker-compose.
-	cd ${APP_DIR} && ${COMPOSE} ${ARGS}
-.PHONY: docker.dc
+php-shell:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php sh)
 
-server.start: ## Run the local webserver using Symfony
-	${SYMFONY} local:server:start -d
+node-shell:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm -i nodejs sh)
 
-server.stop: ## Stop the local webserver
-	${SYMFONY} local:server:stop
+node-watch:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm -i nodejs "npm run watch")
 
 ###
 ### THEME
@@ -222,17 +143,8 @@ theme: install-theme build-theme ## Install Theme
 .PHONY: theme
 
 install-theme:
-ifneq ("$(wildcard install/Application)","")
-	cp -r ./tests ${APP_DIR}/tests
-endif
-	rm -rf ${APP_DIR}/themes/TailwindTheme
-	mkdir ${APP_DIR}/themes/TailwindTheme
-	cp -r assets ${APP_DIR}/themes/TailwindTheme
-	cp -r templates ${APP_DIR}/themes/TailwindTheme
-	cp composer.json ${APP_DIR}/themes/TailwindTheme
 	cp tailwind.config.js ${APP_DIR}
 	cp postcss.config.js ${APP_DIR}
-	cp webpack.config.js ${APP_DIR}/themes/TailwindTheme
 	echo "const tailwindTheme = require('./themes/TailwindTheme/webpack.config');" >> ${APP_DIR}/webpack.config.js
 	echo "module.exports = [shopConfig, adminConfig, appShopConfig, appAdminConfig, tailwindTheme];" >> ${APP_DIR}/webpack.config.js
 	echo "            tailwindTheme:" >> ${APP_DIR}/config/packages/assets.yaml
@@ -240,50 +152,41 @@ endif
 	echo "        tailwindTheme: '%kernel.project_dir%/public/themes/tailwind-theme'" >> ${APP_DIR}/config/packages/webpack_encore.yaml
 	echo "    webp:" >> ${APP_DIR}/config/packages/liip_imagine.yaml
 	echo "        generate: true" >> ${APP_DIR}/config/packages/liip_imagine.yaml
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs "npm install tailwindcss @fortawesome/fontawesome-free daisyui")
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm nodejs "npm install postcss-loader@^7.0.0 autoprefixer --save-dev")
 
 HELP += $(call help,build-theme,			Build theme)
 build-theme:
-	cd ${APP_DIR} && ${NPM} run build:prod
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm -i nodejs "npm run build:prod")
+	echo "navigate to http://localhost:8050/"
 
 HELP += $(call help,watch-theme,			Build & watch theme)
 watch-theme:
-	cd ${APP_DIR} && ${NPM} run watch
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose run --rm -i nodejs "npm run watch")
 
-HELP += $(call apply-theme,			Update APP_DIR theme files with root theme files)
-apply-theme:
-	rm -rf ${APP_DIR}/themes/TailwindTheme/assets
-	rm -rf ${APP_DIR}/themes/TailwindTheme/templates
-	rm -rf ${APP_DIR}/themes/TailwindTheme/tailwind.config.js
-	rm -rf ${APP_DIR}/themes/TailwindTheme/postcss.config.js
-	cp -r ./assets ${APP_DIR}/themes/TailwindTheme
-	cp -r ./templates ${APP_DIR}/themes/TailwindTheme
-	cp ./tailwind.config.js ${APP_DIR}/themes/TailwindTheme
-	cp ./postcss.config.js ${APP_DIR}/themes/TailwindTheme
+###
+### TESTS
+### ¯¯¯¯¯
 
+test.all: test.composer test.schema test.twig ## Run all tests in once
 
-HELP += $(call help,reset-theme,			Update root theme files with APP_DIR theme files)
-reset-theme:
-	rm -rf ./assets
-	rm -rf ./templates
-	rm -rf ./tailwind.config.js
-	rm -rf ./postcss.config.js
-	cp -r ${APP_DIR}/themes/TailwindTheme/assets ./
-	cp -r ${APP_DIR}/themes/TailwindTheme/templates ./
-	cp ${APP_DIR}/tailwind.config.js ./tailwind.config.js
-	cp ${APP_DIR}/postcss.config.js ./postcss.config.js
+test.composer: ## Validate composer.json
+	${COMPOSER} validate --strict
 
+# Check coding standard
+test.ecs:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php vendor/bin/ecs check ${PLUGIN_DIR}/src)
 
+# Fix coding standard
+test.ecs.fix:
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php vendor/bin/ecs --fix check ${PLUGIN_DIR}/src)
 
+HELP += $(call help,test.schema,			Validate MySQL Schema)
+test.schema: ## Validate MySQL Schema
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php bin/console doctrine:cache:clear-metadata)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php bin/console doctrine:schema:validate)
 
-
-
-
-
-
-
-
-
-
-
-
-
+HELP += $(call help,test.twig,			Validate Twig templates)
+test.twig: ## Validate Twig templates
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php bin/console lint:twig --no-debug ${PLUGIN_DIR}/templates)
+	cd ${APP_DIR} && (ENV=$(ENV) docker-compose exec php vendor/bin/twigcs ${PLUGIN_DIR}/templates --severity error --display blocking)

@@ -1,6 +1,6 @@
 FROM adeliom/php:8.2-caddy-node20
 
-ARG SYLIUS_VERSION=1.12.0
+ARG SYLIUS_VERSION=1.12.6
 ARG SYMFONY_VERSION=6.4
 
 RUN apk add --update make
